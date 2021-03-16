@@ -78,6 +78,11 @@ function NodeActionService(config) {
         server.timeout = 0;
     };
 
+    this.exitCode = function exitCode(req) {
+        setStatus(Status.ready);
+        process.exit(10);
+    }
+
     /** Returns a promise of a response to the /init invocation.
      *
      *  req.body = { main: String, code: String, binary: Boolean }

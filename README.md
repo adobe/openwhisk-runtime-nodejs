@@ -92,6 +92,7 @@ The `core/nodejsActionBase` folder contains the Node.js app server used to imple
 ./gradlew core:nodejs10Action:distDocker
 ./gradlew core:nodejs12Action:distDocker
 ./gradlew core:nodejs14Action:distDocker
+./gradlew core:nodejs14MultitenantAction:distDocker
 ```
 
 This will return the following runtime images with the following names: `action-nodejs-v10`, `action-nodejs-v12` and `action-nodejs-v14`.
