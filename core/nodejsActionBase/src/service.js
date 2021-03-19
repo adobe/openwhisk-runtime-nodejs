@@ -63,6 +63,24 @@ function NodeActionService(config) {
         return (typeof userCodeRunner !== 'undefined');
     };
 
+    let connections = [];
+
+    this.shutDown = function shutDown() {
+        console.log('Received kill signal, shutting down gracefully');
+        server.close(() => {
+            console.log('Closed out remaining connections');
+            process.exit(0);
+        });
+
+        setTimeout(() => {
+            console.error('Could not close connections in time, forcefully shutting down');
+            process.exit(1);
+        }, 10000);
+
+        connections.forEach(curr => curr.end());
+        setTimeout(() => connections.forEach(curr => curr.destroy()), 5000);
+    }
+
     /**
      * Starts the server.
      *
@@ -74,14 +92,14 @@ function NodeActionService(config) {
             var port = server.address().port;
         });
 
+        server.on('connection', connection => {
+            connections.push(connection);
+            connection.on('close', () => connections = connections.filter(curr => curr !== connection));
+        });
+
         // This is required as http server will auto disconnect in 2 minutes, this to not auto disconnect at all
         server.timeout = 0;
     };
-
-    this.exitCode = function exitCode(req) {
-        setStatus(Status.ready);
-        process.exit(10);
-    }
 
     /** Returns a promise of a response to the /init invocation.
      *
@@ -119,6 +137,51 @@ function NodeActionService(config) {
         }
     };
 
+    this.webAction = function webAction(req) {
+        let body = req.body || {};
+        let params = req.params || {};
+        let actionName = params.action;
+        if (params.namespace != process.env.tenantId) {
+            let msg = `Invalid tenant ${params.namespace}.`;
+            return Promise.reject(errorMessage(403, msg));
+        }
+        if (!('actions' in process.env)) {
+            process.env.actions = {}
+        }
+        if (process.env.actions.hasOwnProperty(actionName)) {
+            new Promise((resolve, reject) => {
+                doInit(process.env.actions[actionName]).then(_ => resolve()).catch(err => reject(err))
+            }).then(_ => {
+                runCode(req)
+            }).bind(this)
+        } else {
+            console.log(this)
+            return new Promise((resolve, reject) => {
+                console.log(this)
+                var openwhisk = require('openwhisk');
+                var ow = openwhisk();
+                ow.actions.get(actionName).then(action => {
+                    let message = action.exec;
+                    message['main'] = 'main'
+                    process.env.actions[actionName] = message;
+                    return message;
+                }).then((message) => {resolve(message)})
+                .catch(err => reject(err))
+            }).then(message => {
+                console.log(this)
+                return doInit(message)
+            }).then(_ => {
+                console.log(this)
+                setStatus(Status.ready);
+                return runCode(req)
+            }).catch(error => {
+                setStatus(Status.stopped);
+                let errStr = `Initialization has failed due to: ${error.stack ? String(error.stack) : error}`;
+                    return Promise.reject(errorMessage(502, errStr));
+            });
+        }
+    }
+
     /**
      * Returns a promise of a response to the /exec invocation.
      * Note that the promise is failed if and only if there was an unhandled error
@@ -127,7 +190,9 @@ function NodeActionService(config) {
      *
      * req.body = { value: Object, meta { activationId : int } }
      */
-    this.runCode = function runCode(req) {
+    this.runCode = runCode
+
+    function runCode(req) {
         if (status === Status.ready && userCodeRunner !== undefined) {
             if (!ignoreRunStatus) {
                 setStatus(Status.running);

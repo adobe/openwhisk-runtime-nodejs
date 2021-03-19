@@ -68,7 +68,55 @@ if (!platformFactory.isSupportedPlatform(targetPlatform)) {
 
 const platformImpl = factory.createPlatformImpl(targetPlatform);
 
+fs = require('fs');
+process.env.tenantId = null;
+process.env.status = 'UNIINTIALIZED'
+try {
+    if (fs.existsSync('/var/log/tenant')) {
+        const data = fs.readFileSync('/var/log/tenant', 'utf8')
+        const tenantData = JSON.parse(data)
+        if ('tenantId' in tenantData) {
+            process.env.tenantId = tenantData.tenantId
+            process.env.status = 'INITIALIZED'
+        } else {
+            //state UNIINTIALIZED
+        }
+    }
+  } catch(err) {
+    //state UNIINTIALIZED
+  }
+console.log("Status: " + process.env.status + " Tenant Id: " + process.env.tenantId)  
+
 if (typeof platformImpl !== "undefined") {
+
+    app.get('/reallocateTo/:namespace', function (req, res, next) {
+        process.env.status = 'REIINTIALIZING'
+        fs = require('fs');
+        let tenantId = req.params.namespace || false;
+        console.log("Status: " + process.env.status + " New Tenant Id: " + tenantId) 
+        const tenantData = JSON.stringify({'tenantId': tenantId})
+        if (tenantId) {
+            console.log("Tenant Data" + tenantData)
+            fs.writeFile('/var/log/tenant', tenantData, function (err, data) {
+                if (err) {
+                  console.log("error")
+                  return console.log(err);
+                }
+                console.log("exiting")
+                service.shutDown()
+              });
+        } else {
+            console.log("No tenant provided");
+        }
+    })
+
+    app.all('/*', function (req, res, next) {
+        if (process.env.status != 'INITIALIZED') {
+            res.status(403).json({error: "Request is rejected."});
+        } else {
+            next()
+        }
+    })
 
     platformImpl.registerHandlers(app, platformImpl);
 
