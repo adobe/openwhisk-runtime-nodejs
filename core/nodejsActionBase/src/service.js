@@ -141,7 +141,11 @@ function NodeActionService(config) {
     this.webAction = function webAction(req) {
         let body = req.body || {};
         let params = req.params || {};
-        let actionName = params.action;
+
+        let pkg = params["package"] || "default";
+	    let actionName = pkg + "-" + params.action;    
+        let fqActionName = pkg + "/" + params.action;
+
         if (params.namespace != process.env.tenantId) {
             let msg = `Invalid tenant ${params.namespace}.`;
             return Promise.reject(errorMessage(403, msg));
@@ -157,7 +161,7 @@ function NodeActionService(config) {
             return new Promise((resolve, reject) => {
                 var openwhisk = require('openwhisk');
                 var ow = openwhisk();
-                ow.actions.get(actionName).then(action => {
+                ow.actions.get(fqActionName).then(action => {
                     let message = action.exec;
                     message['main'] = 'main'
                     process.env.actions[actionName] = message;

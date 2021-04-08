@@ -94,10 +94,14 @@ if (typeof platformImpl !== "undefined") {
         fs = require('fs');
         let tenantId = req.params.namespace || false;
         console.log("Status: " + process.env.status + " New Tenant Id: " + tenantId) 
-        const tenantData = JSON.stringify({'tenantId': tenantId})
+
+        /**
+         * @TODO In order to proof the security model we need to persist initialized tenant to filesystem
+         * Later this can be replaced with the service in front of the NodeJS which do the same outside
+         * of execution environment
+         */
         if (tenantId) {
-            console.log("Tenant Data" + tenantData)
-            fs.writeFile('/var/log/tenant', tenantData, function (err, data) {
+            fs.writeFile('/var/log/tenant', JSON.stringify({'tenantId': tenantId}), function (err, data) {
                 if (err) {
                   console.log("error")
                   return console.log(err);
