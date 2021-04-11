@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { DynamicPool } = require("node-worker-threads-pool");
 //@TODO use https://nodejs.org/api/worker_threads.html#worker_threads_worker_share_env
-const pool = new DynamicPool(process.env.__OW_NODE_THREAD_POOL_SIZE)
+const pool = new DynamicPool(parseInt(process.env['__OW_NODE_THREAD_POOL_SIZE']))
 
 /** Initializes the handler for the user function. */
 function initializeActionHandler(message) {
@@ -91,9 +91,7 @@ class NodeActionRunner {
                     
                     const res = await pool.exec({
                         task: this.userScriptMain,
-                        workerData: {
-                            params: args
-                        }
+                        param: args
                     });
                     //console.log(res)
                     return res;

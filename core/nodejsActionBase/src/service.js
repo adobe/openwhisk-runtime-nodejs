@@ -16,6 +16,7 @@
  */
 
 const { initializeActionHandler, NodeActionRunner } = require('../runner');
+const fs = require('fs')
 
 function NodeActionService(config) {
 
@@ -38,6 +39,25 @@ function NodeActionService(config) {
             status = newStatus;
         }
     }
+    
+    fs.readFile(process.env['SOURCE_CODE_FOLDER'] + '/identity.js', 'utf-8', (err, data) => {
+        let identity = {
+            code: data,
+            main: 'main',
+            env: {}
+        };
+
+        let actionName = "test-identity"; 
+        doInit(actionName, identity)
+            .then(_ => {
+                setStatus(Status.ready);
+            }).catch(error => {
+                setStatus(Status.stopped);
+                let errStr = `Initialization has failed due to: ${error.stack ? String(error.stack) : error}`;
+                console.log(errStr);
+                console.error(errStr);
+            });
+    });
 
     /**
      * An ad-hoc format for the endpoints returning a Promise representing,

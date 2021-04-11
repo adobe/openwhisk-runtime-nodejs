@@ -41,7 +41,11 @@ RUN cd / && npm install --no-package-lock --production \
     && npm cache clean --force
 
 RUN mkdir -p /var/log/supervisor
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf    
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+RUN mkdir /actions
+COPY identity.js /actions/identity.js
+COPY tenant /var/log/tenant
+ENV SOURCE_CODE_FOLDER "/actions"
 
 EXPOSE 8080
 

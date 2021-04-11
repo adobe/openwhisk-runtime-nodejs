@@ -136,7 +136,7 @@ if (typeof platformImpl !== "undefined") {
      */
     app.use(function (err, req, res, next) {
         console.log(err.stackTrace);
-        res.status(500).json({error: "Bad request."});
+        res.status(500).json({error: "Error while processing the request."});
     });
 
     service.start(app);
