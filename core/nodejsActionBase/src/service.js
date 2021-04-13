@@ -16,6 +16,8 @@
  */
 
 const { initializeActionHandler, NodeActionRunner } = require('../runner');
+const fs = require('fs')
+var os = require("os");
 
 function NodeActionService(config) {
 
@@ -26,17 +28,37 @@ function NodeActionService(config) {
         stopped: 'stopped',
     };
 
-    const ignoreRunStatus = config.allowConcurrent === undefined ? false : config.allowConcurrent.toLowerCase() === 'true';
+    const ignoreRunStatus = true; //config.allowConcurrent === undefined ? false : config.allowConcurrent.toLowerCase() === 'true';
 
     let status = Status.ready;
     let server = undefined;
     let userCodeRunner = undefined;
+    let userCodeRunners = {};
 
     function setStatus(newStatus) {
         if (status !== Status.stopped) {
             status = newStatus;
         }
     }
+    
+    fs.readFile(process.env['SOURCE_CODE_FOLDER'] + '/identity.js', 'utf-8', (err, data) => {
+        let identity = {
+            code: data,
+            main: 'main',
+            env: {}
+        };
+
+        let actionName = "default-multitenant"; 
+        doInit(actionName, identity)
+            .then(_ => {
+                setStatus(Status.ready);
+            }).catch(error => {
+                setStatus(Status.stopped);
+                let errStr = `Initialization has failed due to: ${error.stack ? String(error.stack) : error}`;
+                console.log(errStr);
+                console.error(errStr);
+            });
+    });
 
     /**
      * An ad-hoc format for the endpoints returning a Promise representing,
@@ -63,6 +85,24 @@ function NodeActionService(config) {
         return (typeof userCodeRunner !== 'undefined');
     };
 
+    let connections = [];
+
+    this.shutDown = function shutDown() {
+        console.log('Received kill signal, shutting down gracefully');
+        server.close(() => {
+            console.log('Closed out remaining connections');
+            process.exit(0);
+        });
+
+        setTimeout(() => {
+            console.error('Could not close connections in time, forcefully shutting down');
+            process.exit(1);
+        }, 10000);
+
+        connections.forEach(curr => curr.end());
+        setTimeout(() => connections.forEach(curr => curr.destroy()), 5000);
+    }
+
     /**
      * Starts the server.
      *
@@ -74,6 +114,11 @@ function NodeActionService(config) {
             var port = server.address().port;
         });
 
+        server.on('connection', connection => {
+            connections.push(connection);
+            connection.on('close', () => connections = connections.filter(curr => curr !== connection));
+        });
+
         // This is required as http server will auto disconnect in 2 minutes, this to not auto disconnect at all
         server.timeout = 0;
     };
@@ -83,7 +128,7 @@ function NodeActionService(config) {
      *  req.body = { main: String, code: String, binary: Boolean }
      */
     this.initCode = function initCode(req) {
-        if (status === Status.ready && userCodeRunner === undefined) {
+        if (status === Status.ready && Object.keys(userCodeRunners).length == 0) {
             setStatus(Status.starting);
 
             let body = req.body || {};
@@ -103,16 +148,63 @@ function NodeActionService(config) {
                 let msg = 'Missing main/no code to execute.';
                 return Promise.reject(errorMessage(403, msg));
             }
-        } else if (userCodeRunner !== undefined) {
+        } else if (Object.keys(userCodeRunners).length != 0) {
             let msg = 'Cannot initialize the action more than once.';
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         } else {
-            let msg = `System not ready, status is ${status}.`;
+            var hostname = os.hostname();
+            let msg = `${hostname} System not ready, status is ${status}.`;
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         }
     };
+
+    this.webAction = function webAction(req) {
+        let body = req.body || {};
+        let params = req.params || {};
+
+        let pkg = params["package"] || "default";
+	    let actionName = pkg + "-" + params.action;    
+        let fqActionName = pkg + "/" + params.action;
+
+        if (params.namespace != process.env.tenantId) {
+            let msg = `Invalid tenant ${params.namespace}.`;
+            return Promise.reject(errorMessage(403, msg));
+        }
+        if (!('actions' in process.env)) {
+            process.env.actions = {}
+        }
+        if (userCodeRunners.hasOwnProperty(actionName)) {
+            return runCode(actionName, req).catch(error => {
+                var hostname = os.hostname();
+                let errStr = `Code has failed due to: ${error.stack ? String(error.stack) : JSON.stringify(error)} at ${hostname}`;
+                return Promise.reject(errorMessage(502, errStr));
+            });
+        } else {
+            console.log('Reading action from OW');
+            return new Promise((resolve, reject) => {
+                var openwhisk = require('openwhisk');
+                var ow = openwhisk();
+                ow.actions.get(fqActionName).then(action => {
+                    let message = action.exec;
+                    message['main'] = 'main'
+                    process.env.actions[actionName] = message;
+                    return message;
+                }).then((message) => {resolve(message)})
+                .catch(err => reject(err))
+            }).then(message => {
+                return doInit(actionName, message)
+            }).then(_ => {
+                setStatus(Status.ready);
+                return runCode(actionName, req)
+            }).catch(error => {
+                setStatus(Status.stopped);
+                let errStr = `Initialization has failed due to: ${error.stack ? String(error.stack) : error}`;
+                    return Promise.reject(errorMessage(502, errStr));
+            });
+        }
+    }
 
     /**
      * Returns a promise of a response to the /exec invocation.
@@ -122,8 +214,10 @@ function NodeActionService(config) {
      *
      * req.body = { value: Object, meta { activationId : int } }
      */
-    this.runCode = function runCode(req) {
-        if (status === Status.ready && userCodeRunner !== undefined) {
+    this.runCode = runCode
+
+    function runCode(name, req) {
+        if (status === Status.ready && Object.keys(userCodeRunners).length != 0) {
             if (!ignoreRunStatus) {
                 setStatus(Status.running);
             }
@@ -138,7 +232,7 @@ function NodeActionService(config) {
                 return Promise.reject(errorMessage(403, errStr));
             }
 
-            return doRun(msg).then(result => {
+            return doRun(name, msg).then(result => {
                 if (!ignoreRunStatus) {
                     setStatus(Status.ready);
                 }
@@ -153,13 +247,14 @@ function NodeActionService(config) {
                 return Promise.reject(errorMessage(502, msg));
             });
         } else {
-            let msg = userCodeRunner ? `System not ready, status is ${status}.` : 'System not initialized.';
+            var hostname = os.hostname();
+            let msg = Object.keys(userCodeRunners).length > 0 ? `${hostname} System not ready, status is ${status}.` : 'System not initialized.';
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         }
     };
 
-    function doInit(message) {
+    function doInit(name, message) {
         if (message.env && typeof message.env == 'object') {
             Object.keys(message.env).forEach(k => {
                 let val = message.env[k];
@@ -173,7 +268,8 @@ function NodeActionService(config) {
 
         return initializeActionHandler(message)
             .then(handler => {
-                userCodeRunner = new NodeActionRunner(handler);
+                console.log("Creating action with the name " + name)
+                userCodeRunners[name] = new NodeActionRunner(handler);
             })
             // emit error to activation log then flush the logs as this is the end of the activation
             .catch(error => {
@@ -183,7 +279,7 @@ function NodeActionService(config) {
             });
     }
 
-    function doRun(msg) {
+    function doRun(name, msg) {
         // Move per-activation keys to process env. vars with __OW_ (reserved) prefix
         Object.keys(msg).forEach(k => {
             if (typeof msg[k] === 'string' && k !== 'value') {
@@ -191,8 +287,9 @@ function NodeActionService(config) {
                 process.env[envVariable] = msg[k];
             }
         });
+        console.log("Running action with the name " + name)
 
-        return userCodeRunner
+        return userCodeRunners[name]
             .run(msg.value)
             .then(result => {
                 if (typeof result !== 'object') {

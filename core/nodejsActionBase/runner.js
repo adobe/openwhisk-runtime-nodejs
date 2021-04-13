@@ -22,6 +22,9 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { DynamicPool } = require("node-worker-threads-pool");
+//@TODO use https://nodejs.org/api/worker_threads.html#worker_threads_worker_share_env
+const pool = new DynamicPool(parseInt(process.env['__OW_NODE_THREAD_POOL_SIZE']))
 
 /** Initializes the handler for the user function. */
 function initializeActionHandler(message) {
@@ -79,12 +82,29 @@ class NodeActionRunner {
     run(args) {
         return new Promise((resolve, reject) => {
             try {
-                var result = this.userScriptMain(args);
+
+                (async () => {
+                    // This will choose one idle worker in the pool
+                    // to execute your heavy task without blocking
+                    // the main thread!
+                    console.log("Running action in a thread!")
+                    
+                    const res = await pool.exec({
+                        task: this.userScriptMain,
+                        param: args
+                    });
+                    //console.log(res)
+                    return res;
+                })()
+                    .then(result => {
+                        this.finalizeResult(result, resolve);
+                    }).catch(err => reject(err))
+
             } catch (e) {
                 reject(e);
             }
 
-            this.finalizeResult(result, resolve);
+            
         });
     };
 
