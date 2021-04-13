@@ -17,6 +17,7 @@
 
 const { initializeActionHandler, NodeActionRunner } = require('../runner');
 const fs = require('fs')
+var os = require("os");
 
 function NodeActionService(config) {
 
@@ -27,7 +28,7 @@ function NodeActionService(config) {
         stopped: 'stopped',
     };
 
-    const ignoreRunStatus = config.allowConcurrent === undefined ? false : config.allowConcurrent.toLowerCase() === 'true';
+    const ignoreRunStatus = true; //config.allowConcurrent === undefined ? false : config.allowConcurrent.toLowerCase() === 'true';
 
     let status = Status.ready;
     let server = undefined;
@@ -47,7 +48,7 @@ function NodeActionService(config) {
             env: {}
         };
 
-        let actionName = "test-identity"; 
+        let actionName = "default-multitenant"; 
         doInit(actionName, identity)
             .then(_ => {
                 setStatus(Status.ready);
@@ -152,7 +153,8 @@ function NodeActionService(config) {
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         } else {
-            let msg = `System not ready, status is ${status}.`;
+            var hostname = os.hostname();
+            let msg = `${hostname} System not ready, status is ${status}.`;
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         }
@@ -174,8 +176,11 @@ function NodeActionService(config) {
             process.env.actions = {}
         }
         if (userCodeRunners.hasOwnProperty(actionName)) {
-            console.log('Reading action from cache');
-            return runCode(actionName, req)
+            return runCode(actionName, req).catch(error => {
+                var hostname = os.hostname();
+                let errStr = `Code has failed due to: ${error.stack ? String(error.stack) : JSON.stringify(error)} at ${hostname}`;
+                return Promise.reject(errorMessage(502, errStr));
+            });
         } else {
             console.log('Reading action from OW');
             return new Promise((resolve, reject) => {
@@ -242,7 +247,8 @@ function NodeActionService(config) {
                 return Promise.reject(errorMessage(502, msg));
             });
         } else {
-            let msg = Object.keys(userCodeRunners).length > 0 ? `System not ready, status is ${status}.` : 'System not initialized.';
+            var hostname = os.hostname();
+            let msg = Object.keys(userCodeRunners).length > 0 ? `${hostname} System not ready, status is ${status}.` : 'System not initialized.';
             console.error('Internal system error:', msg);
             return Promise.reject(errorMessage(403, msg));
         }
